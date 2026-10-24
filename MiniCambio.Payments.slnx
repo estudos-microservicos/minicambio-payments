@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/MiniCambio.Payments.Api/MiniCambio.Payments.Api.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MiniCambio.Payments.IntegrationTests/MiniCambio.Payments.IntegrationTests.csproj" />
+    <Project Path="tests/MiniCambio.Payments.UnitTests/MiniCambio.Payments.UnitTests.csproj" />
+  </Folder>
+</Solution>
