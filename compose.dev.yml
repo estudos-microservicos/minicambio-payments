@@ -1,0 +1,24 @@
+# Apenas o Postgres do Payments, para rodar a API com `dotnet run` localmente:
+#   docker compose -f compose.dev.yml up -d
+# Mesmas credenciais e porta do docker-compose do minicambio-infra (não use os dois ao mesmo tempo).
+name: minicambio-payments-dev
+
+services:
+  payments-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: payments
+      POSTGRES_USER: payments
+      POSTGRES_PASSWORD: payments-local-pwd
+    ports:
+      - "5434:5432"
+    volumes:
+      - payments-db-dev-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U payments -d payments"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  payments-db-dev-data:
