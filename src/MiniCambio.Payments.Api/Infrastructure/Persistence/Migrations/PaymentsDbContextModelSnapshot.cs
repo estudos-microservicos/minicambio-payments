@@ -79,6 +79,10 @@ namespace MiniCambio.Payments.Api.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(50)")
                         .HasColumnName("provider_reference");
 
+                    b.Property<DateTimeOffset?>("ResultPublishedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("result_published_at");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(20)

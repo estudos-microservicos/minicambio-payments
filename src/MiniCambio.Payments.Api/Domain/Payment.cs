@@ -59,6 +59,12 @@ public sealed class Payment
 
     public DateTimeOffset? ProcessingStartedAt { get; private set; }
 
+    /// <summary>
+    /// Quando o resultado (<c>Completed</c>/<c>Failed</c>) foi publicado no Kafka. Enquanto estiver vazio num pagamento
+    /// finalizado, o worker tenta publicar: a própria tabela funciona como "caixa de saída" (outbox).
+    /// </summary>
+    public DateTimeOffset? ResultPublishedAt { get; private set; }
+
     public DateTimeOffset CreatedAt { get; private set; }
 
     public DateTimeOffset UpdatedAt { get; private set; }
@@ -137,6 +143,17 @@ public sealed class Payment
         {
             Fail(outcome.FailureReason!, now);
         }
+    }
+
+    /// <summary>Registra que o resultado foi publicado no Kafka. Só vale para pagamentos finalizados.</summary>
+    public void MarkResultPublished(DateTimeOffset now)
+    {
+        if (Status is not (PaymentStatus.Completed or PaymentStatus.Failed))
+        {
+            throw new DomainException($"Não é possível publicar o resultado de um pagamento com status {Status}.");
+        }
+
+        ResultPublishedAt = now;
     }
 
     private void EnsureStatus(PaymentStatus expected, string action)

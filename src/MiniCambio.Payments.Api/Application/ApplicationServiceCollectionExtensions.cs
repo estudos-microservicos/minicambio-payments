@@ -35,6 +35,7 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<CreatePaymentHandler>();
         services.AddScoped<GetPaymentHandler>();
         services.AddScoped<GetPaymentByOrderHandler>();
+        services.AddScoped<PaymentRequestMessageHandler>();
 
         return services;
     }

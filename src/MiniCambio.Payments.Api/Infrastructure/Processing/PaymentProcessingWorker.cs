@@ -42,12 +42,13 @@ public sealed class PaymentProcessingWorker(
             var cycle = scope.ServiceProvider.GetRequiredService<PaymentProcessingCycle>();
             var result = await cycle.RunOnceAsync(stoppingToken);
 
-            if (result.Claimed > 0 || result.Finished > 0)
+            if (result.Claimed > 0 || result.Finished > 0 || result.Published > 0)
             {
                 logger.LogInformation(
-                    "Ciclo de processamento: {Claimed} pagamento(s) reservado(s), {Finished} finalizado(s)",
+                    "Ciclo de processamento: {Claimed} pagamento(s) reservado(s), {Finished} finalizado(s), {Published} resultado(s) publicado(s)",
                     result.Claimed,
-                    result.Finished);
+                    result.Finished,
+                    result.Published);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)

@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using MiniCambio.Payments.Api.Application;
+using MiniCambio.Payments.Api.Application.Payments;
+using MiniCambio.Payments.Api.Infrastructure.Messaging;
 using MiniCambio.Payments.Api.Infrastructure.Persistence;
 using MiniCambio.Payments.Api.Infrastructure.Processing;
 
@@ -36,7 +38,18 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<PaymentProcessingCycle>();
         services.AddHostedService<PaymentProcessingWorker>();
 
-        // Live não tem dependências (só "o processo responde"); ready inclui o banco.
+        // Kafka: o consumidor dos pedidos de pagamento (roda em cada réplica, no mesmo grupo de consumo) e o
+        // publicador dos resultados (singleton, um producer por Pod), usado pelo ciclo de processamento.
+        services.AddOptions<KafkaOptions>()
+            .BindConfiguration(KafkaOptions.SectionName)
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+        services.AddSingleton<KafkaPaymentResultPublisher>();
+        services.AddSingleton<IPaymentResultPublisher>(provider => provider.GetRequiredService<KafkaPaymentResultPublisher>());
+        services.AddHostedService<PaymentRequestsConsumer>();
+
+        // Live não tem dependências (só "o processo responde"); ready inclui o banco. O Kafka fica de fora de
+        // propósito: com ele fora, a API continua atendendo consultas e os pedidos esperam no tópico.
         services.AddHealthChecks().AddDbContextCheck<PaymentsDbContext>("database", tags: [ReadyTag]);
 
         return services;

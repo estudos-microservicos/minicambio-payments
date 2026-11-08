@@ -6,16 +6,37 @@ Recebe do serviço Orders as solicitações de pagamento das ordens confirmadas 
 
 ## Como funciona
 
-1. O Orders chama `POST /api/v1/payments`; o pagamento é gravado em `Pending` e a API responde `202 Accepted`.
+1. O Orders publica o pedido de pagamento no **Kafka**, tópico `minicambio.payment-requests` (chave = `orderId`). O
+   `PaymentRequestsConsumer` lê a mensagem e a trata como um `POST /api/v1/payments` (mesmo validator, mesmo handler):
+   o pagamento é gravado em `Pending`. O `POST` continua existindo, para uso direto (smoke test, `requests.http`).
 2. O `PaymentProcessingWorker` (um `BackgroundService`) roda um ciclo a cada `Payments__WorkerIntervalSeconds`:
    - **claim**: reserva até 10 pagamentos `Pending` com `SELECT ... FOR UPDATE SKIP LOCKED` numa transação e os
      marca como `Processing` (preenchendo `processingStartedAt`);
    - **conclusão**: pagamentos em `Processing` há pelo menos `Payments__SimulatedDelaySeconds` recebem o resultado
-     das regras do mock (`Completed` ou `Failed`), também com `SKIP LOCKED`.
-3. O Orders acompanha o pagamento por polling (`GET /api/v1/payments/{id}`).
+     das regras do mock (`Completed` ou `Failed`), também com `SKIP LOCKED`;
+   - **publicação**: pagamentos finalizados com `result_published_at` vazio têm o resultado publicado no tópico
+     `minicambio.payment-results`, e a coluna é preenchida.
+3. O Orders consome o resultado e finaliza a ordem, sem consultar o Payments.
+
+Gravar o resultado e publicá-lo são passos separados (padrão **outbox**): se o Kafka estiver fora, o resultado já
+está no banco e sai num ciclo seguinte. A entrega é "pelo menos uma vez" nos dois sentidos: um pedido repetido
+encontra o pagamento existente (idempotência por `orderId`) e um resultado repetido é ignorado pelo Orders.
+
+### Mensagens
+
+```jsonc
+// minicambio.payment-requests (Orders → Payments): mesmo formato do corpo do POST
+{ "orderId": "…", "currency": "USD", "foreignAmount": 100, "beneficiary": { "name": "…", "country": "BR", "accountNumber": "…" } }
+
+// minicambio.payment-results (Payments → Orders)
+{ "paymentId": "…", "orderId": "…", "status": "Completed", "failureReason": null, "providerReference": "MOCK-AB12CD34" }
+```
+
+O header `X-Correlation-Id` dos pedidos vai para o escopo de log do consumidor. Mensagem ilegível ou inválida é
+logada e descartada (não há fila de mensagens mortas).
 
 O `SKIP LOCKED` faz cada execução pular as linhas já travadas por outra, então várias réplicas do serviço (no
-Kubernetes, numa etapa futura) nunca processam o mesmo pagamento. Erro em um pagamento é logado e não interrompe os
+Kubernetes) nunca processam o mesmo pagamento. Erro em um pagamento é logado e não interrompe os
 demais nem derruba o worker.
 
 ```
@@ -89,9 +110,14 @@ máquina que atendeu. Em `Development`, a documentação fica em `/scalar` (Open
 | `Payments__SimulatedDelaySeconds` | `3` | Tempo mínimo em `Processing` antes do resultado, em segundos |
 | `Payments__BlockedCountries` | `KP,IR` | Países bloqueados (ISO 3166-1 alpha-2) separados por vírgula; vazio = nenhum |
 | `Payments__MaxAmount` | `100000` | Valor máximo aceito pelo mock (em moeda estrangeira) |
+| `Kafka__BootstrapServers` | — (obrigatória) | Endereço do Kafka (ex.: `kafka:9092`) |
+| `Kafka__PaymentRequestsTopic` | `minicambio.payment-requests` | Tópico consumido (pedidos do Orders) |
+| `Kafka__PaymentResultsTopic` | `minicambio.payment-results` | Tópico em que os resultados são publicados |
+| `Kafka__ConsumerGroupId` | `payments-api` | Grupo de consumo; as réplicas dividem as partições entre si |
 
 As opções são validadas na inicialização: valores fora do intervalo impedem a API de subir. Em `Development`, o
-`appsettings.Development.json` já aponta para o Postgres do `compose.dev.yml` e liga as migrations.
+`appsettings.Development.json` já aponta para o Postgres do `compose.dev.yml`, liga as migrations e usa o Kafka em
+`localhost:9094` (a porta para o host do Kafka do `minicambio-infra`).
 
 ## Requisitos
 
@@ -102,6 +128,7 @@ As opções são validadas na inicialização: valores fora do intervalo impedem
 
 ```powershell
 docker compose -f compose.dev.yml up -d             # só o Postgres, na porta 5434
+docker compose -f ../minicambio-infra/docker-compose.yml up -d kafka kafka-topics   # Kafka em localhost:9094
 dotnet run --project src/MiniCambio.Payments.Api    # http://localhost:5002 (Scalar em /scalar)
 ```
 

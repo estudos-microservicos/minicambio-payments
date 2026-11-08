@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using MiniCambio.Payments.Api.Application.Payments;
+using MiniCambio.Payments.Api.Infrastructure.Messaging;
 using MiniCambio.Payments.Api.Infrastructure.Processing;
 using Npgsql;
 using Testcontainers.PostgreSql;
@@ -14,7 +16,8 @@ namespace MiniCambio.Payments.IntegrationTests;
 
 /// <summary>
 /// Sobe a API contra um Postgres real (Testcontainers), compartilhado por todos os testes do assembly.
-/// O <see cref="PaymentProcessingWorker"/> hospedado é removido para que nenhum pagamento mude de status "sozinho":
+/// O <see cref="PaymentProcessingWorker"/> e o consumidor do Kafka são removidos para que nenhum pagamento mude de
+/// status "sozinho", e o publicador dos resultados vira um <see cref="FakePaymentResultPublisher"/>:
 /// os testes de processamento chamam o <see cref="PaymentProcessingCycle"/> diretamente.
 /// </summary>
 public sealed class PaymentsApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
@@ -65,6 +68,18 @@ public sealed class PaymentsApiFactory : WebApplicationFactory<Program>, IAsyncL
                 && descriptor.ServiceType == typeof(IHostedService)
                 && descriptor.ImplementationType == typeof(PaymentProcessingWorker));
             services.Remove(worker);
+
+            // Sem Kafka nos testes: o consumidor sai (os testes chamam o PaymentRequestMessageHandler diretamente) e o
+            // publicador dos resultados vira um fake.
+            var consumer = services.Single(descriptor =>
+                !descriptor.IsKeyedService
+                && descriptor.ServiceType == typeof(IHostedService)
+                && descriptor.ImplementationType == typeof(PaymentRequestsConsumer));
+            services.Remove(consumer);
+
+            services.RemoveAll<IPaymentResultPublisher>();
+            services.AddSingleton<FakePaymentResultPublisher>();
+            services.AddSingleton<IPaymentResultPublisher>(provider => provider.GetRequiredService<FakePaymentResultPublisher>());
         });
     }
 }

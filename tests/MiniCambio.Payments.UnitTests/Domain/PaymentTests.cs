@@ -170,4 +170,30 @@ public class PaymentTests
 
         Assert.Throws<DomainException>(() => payment.ApplyOutcome(PaymentOutcome.Completed("MOCK-00000000"), Now));
     }
+
+    [Theory]
+    [InlineData(PaymentStatus.Completed)]
+    [InlineData(PaymentStatus.Failed)]
+    public void MarkResultPublished_FinishedPayment_RecordsWhen(PaymentStatus status)
+    {
+        var payment = TestPayments.InStatus(status);
+        var publishedAt = Now.AddSeconds(5);
+
+        payment.MarkResultPublished(publishedAt);
+
+        Assert.Equal(publishedAt, payment.ResultPublishedAt);
+        Assert.Equal(status, payment.Status);
+    }
+
+    [Theory]
+    [InlineData(PaymentStatus.Pending)]
+    [InlineData(PaymentStatus.Processing)]
+    public void MarkResultPublished_PaymentNotFinished_ThrowsDomainException(PaymentStatus status)
+    {
+        var payment = TestPayments.InStatus(status);
+
+        Assert.Throws<DomainException>(() => payment.MarkResultPublished(Now));
+
+        Assert.Null(payment.ResultPublishedAt);
+    }
 }

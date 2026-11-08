@@ -40,7 +40,7 @@ public sealed partial class PaymentProcessingTests(PaymentsApiFactory factory) :
 
         var result = await RunCycleAsync();
 
-        Assert.Equal(new PaymentProcessingCycleResult(Claimed: 1, Finished: 0), result);
+        Assert.Equal(new PaymentProcessingCycleResult(Claimed: 1, Finished: 0, Published: 0), result);
         var payment = await PaymentRequests.GetAsync(client, id);
         Assert.Equal("Processing", payment.GetProperty("status").GetString());
         Assert.Equal(time.GetUtcNow(), payment.GetProperty("processingStartedAt").GetDateTimeOffset());
@@ -56,7 +56,7 @@ public sealed partial class PaymentProcessingTests(PaymentsApiFactory factory) :
 
         var result = await RunCycleAsync();
 
-        Assert.Equal(new PaymentProcessingCycleResult(Claimed: 0, Finished: 0), result);
+        Assert.Equal(new PaymentProcessingCycleResult(Claimed: 0, Finished: 0, Published: 0), result);
         Assert.Equal("Processing", (await PaymentRequests.GetAsync(client, id)).GetProperty("status").GetString());
     }
 
@@ -70,7 +70,7 @@ public sealed partial class PaymentProcessingTests(PaymentsApiFactory factory) :
 
         var result = await RunCycleAsync();
 
-        Assert.Equal(new PaymentProcessingCycleResult(Claimed: 0, Finished: 1), result);
+        Assert.Equal(new PaymentProcessingCycleResult(Claimed: 0, Finished: 1, Published: 1), result);
         var payment = await PaymentRequests.GetAsync(client, id);
         Assert.Equal("Completed", payment.GetProperty("status").GetString());
         Assert.Matches(ProviderReferencePattern(), payment.GetProperty("providerReference").GetString());
@@ -163,6 +163,48 @@ public sealed partial class PaymentProcessingTests(PaymentsApiFactory factory) :
         Assert.Equal("Pending", (await PaymentRequests.GetAsync(client, broken)).GetProperty("status").GetString());
         Assert.Equal("Processing", (await PaymentRequests.GetAsync(client, healthy)).GetProperty("status").GetString());
     }
+
+    // ---------------------------------------------------------------- publicação dos resultados (outbox)
+
+    [Fact]
+    public async Task RunOnce_PaymentFinished_PublishesResultForOrdersOnce()
+    {
+        var id = await PaymentRequests.CreateAsync(client, beneficiaryName: "FAIL Teste");
+        await RunCycleAsync();
+        time.Advance(SimulatedDelay);
+
+        await RunCycleAsync();
+        var next = await RunCycleAsync();
+
+        var message = Assert.Single(Publisher.Messages);
+        Assert.Equal(id, message.PaymentId);
+        Assert.Equal(Api.Domain.PaymentStatus.Failed, message.Status);
+        Assert.Equal("BENEFICIARY_REJECTED", message.FailureReason);
+        Assert.Equal(0, next.Published); // já publicado: não sai de novo
+    }
+
+    [Fact]
+    public async Task RunOnce_KafkaUnavailable_KeepsResultAndPublishesInALaterCycle()
+    {
+        var id = await PaymentRequests.CreateAsync(client);
+        await RunCycleAsync();
+        time.Advance(SimulatedDelay);
+        Publisher.Unavailable = true;
+
+        var whileDown = await RunCycleAsync();
+
+        Assert.Equal(new PaymentProcessingCycleResult(Claimed: 0, Finished: 1, Published: 0), whileDown);
+        Assert.Equal("Completed", (await PaymentRequests.GetAsync(client, id)).GetProperty("status").GetString());
+        Assert.Empty(Publisher.Messages);
+
+        Publisher.Unavailable = false;
+        var afterRecovery = await RunCycleAsync();
+
+        Assert.Equal(1, afterRecovery.Published);
+        Assert.Equal(id, Assert.Single(Publisher.Messages).PaymentId);
+    }
+
+    private FakePaymentResultPublisher Publisher => api.Services.GetRequiredService<FakePaymentResultPublisher>();
 
     private async Task<PaymentProcessingCycleResult> RunCycleAsync()
     {
