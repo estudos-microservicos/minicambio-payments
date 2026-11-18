@@ -49,4 +49,16 @@ public class PlatformEndpointsTests(PaymentsApiFactory factory)
 
         Assert.True(Guid.TryParse(Assert.Single(response.Headers.GetValues("X-Correlation-Id")), out _));
     }
+
+    [Fact]
+    public async Task Metrics_AfterRequest_ExposeHttpServerDurationInPrometheusFormat()
+    {
+        await client.GetAsync("/health/live", TestContext.Current.CancellationToken);
+
+        var response = await client.GetAsync("/metrics", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("http_server_request_duration_seconds_bucket", body);
+    }
 }
